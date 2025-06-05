@@ -11,20 +11,14 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.*;
 
 import static java.util.concurrent.TimeUnit.*;
 
 public class CrptApi {
 
-    private final int requestLimit;
-    private final TimeUnit timeUnitForSem;
-    private final Semaphore sem;
-
-    public CrptApi(TimeUnit timeUnitForSem, int requestLimit) {
-        this.requestLimit = requestLimit;
-        this.timeUnitForSem = timeUnitForSem;
-        sem = new Semaphore(requestLimit);
+    public CrptApi() {
     }
 
     enum DocumentFormat {
@@ -44,13 +38,38 @@ public class CrptApi {
         CONTRACT_PRODUCTION
     }
 
-    public String createDoc(Object docObject, String signature) throws IOException, URISyntaxException, InterruptedException {
+    static class SemaphoreServiceDemon implements Runnable {
+
+        private final int requestLimit;
+        private final TimeUnit timeUnit;
+        private final Semaphore sem;
+
+        public SemaphoreServiceDemon(int requestLimit, TimeUnit timeUnit, Semaphore sem) {
+            this.requestLimit = requestLimit;
+            this.timeUnit = timeUnit;
+            this.sem = sem;
+        }
+
+        public void run() {
+            for (; ; ) {
+                try {
+                    sem.release(requestLimit);
+                    Thread.sleep(millisEstimate(timeUnit), nanoEstimate(timeUnit));
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }
+    }
+
+    public String createDoc(Object docObject, String signature, Semaphore sem) throws IOException
+            , URISyntaxException, InterruptedException {
 
         final String apiCreateDocUrl = "http://localhost:8080/api/v3/lk/documents/create";    // Demo data
         final String token = "12345";                                                         // Demo data
         final String pg = "lp";                                                               // Demo data
 
-        if (sem.tryAcquire(requestLimit, timeoutEstimate(timeUnitForSem, requestLimit), timeUnitEstimate(timeUnitForSem))) {
+        if (sem.tryAcquire()) {
 
             ObjectMapper docObjectMapper = new ObjectMapper();
             String docJson = docObjectMapper.writeValueAsString(docObject);
@@ -77,73 +96,81 @@ public class CrptApi {
                     .build();
 
             HttpClient client = HttpClient.newHttpClient();
-
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            String stringResponse = response.body();
-
-            System.out.println(response);
-            return stringResponse;
+//            System.out.println(response);
+            return response.body();
         } else {
             return "";                                                          // Запрос не выполнен
         }
     }
 
-    private long timeoutEstimate(TimeUnit timeUnit, int requestLimit) {
+    private static long millisEstimate(TimeUnit timeUnit) {
+        long millisEstimated = 0L;
+        switch (timeUnit) {
+            case SECONDS:
+                millisEstimated = 1000L;
+                break;
+            case MILLISECONDS:
+                millisEstimated = 1L;
+                break;
+            case MINUTES:
+                millisEstimated = 1000 * 60L;
+                break;
+            case HOURS:
+                millisEstimated = 1000 * 60 * 60L;
+                break;
+            case DAYS:
+                millisEstimated = 1000 * 60 * 60 * 24L;
+                break;
+            case MICROSECONDS:
+            case NANOSECONDS:
+        }
+        return millisEstimated;
+    }
 
-        long timeoutEstimated = 0L;
-
+    private static int nanoEstimate(TimeUnit timeUnit) {
+        int nanoEstimated = 0;
         switch (timeUnit) {
             case SECONDS:
             case MILLISECONDS:
-            case MICROSECONDS:
-                timeoutEstimated = 1000L / requestLimit;
-                break;
             case MINUTES:
             case HOURS:
-                timeoutEstimated = 60L / requestLimit;
-                break;
             case DAYS:
-                timeoutEstimated = 24L / requestLimit;
+                break;
+            case MICROSECONDS:
+                nanoEstimated = 1000;
                 break;
             case NANOSECONDS:
-                timeoutEstimated = requestLimit;
-                break;
+                nanoEstimated = 1;
         }
-        return timeoutEstimated;
-    }
-
-    private TimeUnit timeUnitEstimate(TimeUnit timeUnit) {
-
-        TimeUnit timeUnitEstimated = NANOSECONDS;
-
-        switch (timeUnit) {
-            case SECONDS -> timeUnitEstimated = MILLISECONDS;
-            case MILLISECONDS -> timeUnitEstimated = MICROSECONDS;
-            case MINUTES -> timeUnitEstimated = SECONDS;
-            case HOURS -> timeUnitEstimated = MINUTES;
-            case DAYS -> timeUnitEstimated = HOURS;
-        }
-        return timeUnitEstimated;
+        return nanoEstimated;
     }
 
     static class CrptApiInvoke implements Runnable {
 
         int requestLimit;
         TimeUnit timeUnit;
+        Semaphore sem;
+        static String stringResult;
 
-        public CrptApiInvoke(TimeUnit timeUnit, int requestLimit) throws InterruptedException {
+        public CrptApiInvoke(TimeUnit timeUnit, int requestLimit, Semaphore sem) throws InterruptedException {
             this.requestLimit = requestLimit;
             this.timeUnit = timeUnit;
+            this.sem = sem;
             System.out.println();
             System.out.println("Вызов CrptApi...");
             Thread.sleep(100);
+        }
+
+        public static String getStringResult() {
+            return stringResult;
         }
 
         @Override
         public void run() {
             try {
                 String signature = "12345";
-                CrptApi crptApi = new CrptApi(timeUnit, requestLimit);
+                CrptApi crptApi = new CrptApi();
 
                 List<Product> productList = new ArrayList<>();
                 Product product1 = new Product("12345", "2025-01-01"
@@ -165,7 +192,7 @@ public class CrptApi {
                         , "2025-03-30", "123456");
 
                 try {
-                    String stringResult = crptApi.createDoc(document, signature);
+                    stringResult = crptApi.createDoc(document, signature, sem);
                     System.out.println("Получен результат " + stringResult);
                 } catch (IOException | URISyntaxException | InterruptedException e) {
                     throw new URISyntaxException("Document creating exception", e.toString());
@@ -179,34 +206,51 @@ public class CrptApi {
 
     public static void main(String[] args) throws InterruptedException {
 //                      Класс для работы с API Честного знака
-//                      Данные ограничения количества запросов (demo: пример)
-        int requestLimit = 1;
+//                      Данные ограничения количества запросов (demo: пример в секундах)
+        int requestLimit = 2;
         TimeUnit timeUnit = SECONDS;
+//                      Данные ограничения периода тестирования (demo: пример в секундах)
+        int testDuration = 10;
+
+        Semaphore sem = new Semaphore(0);
+        SemaphoreServiceDemon semaphoreServiceDemon = new SemaphoreServiceDemon(requestLimit, timeUnit, sem);
+        Thread semaphoreServiceDemonThread = new Thread(semaphoreServiceDemon);
+        semaphoreServiceDemonThread.setDaemon(true);
+        semaphoreServiceDemonThread.start();
 //                      Поток запросов для вызова метода
 //                      "Создание документа для ввода в оборот товара, произведенного в РФ"
 //                      (demo: пример)
+        System.out.println("Demo-запуск запросов с ограничением количества запросов в секунду");
+        System.out.println();
         System.out.println("Время старта потока запросов:");
         LocalDateTime localDateTimeStart = LocalDateTime.now();
         System.out.println(localDateTimeStart);
         int requests = 0;
-        while (LocalDateTime.now().isBefore(localDateTimeStart.plusSeconds(3))) {
-            new CrptApiInvoke(timeUnit, requestLimit).run();
+        int requestsSuccessful = 0;
+        while (LocalDateTime.now().isBefore(localDateTimeStart.plusSeconds(testDuration))) {
+            new CrptApiInvoke(timeUnit, requestLimit, sem).run();
+            System.out.println(LocalDateTime.now());
+            if (!Objects.equals(CrptApiInvoke.getStringResult(), "")) {
+                requestsSuccessful++;
+            }
             requests++;
         }
         System.out.println("Время окончания потока запросов:");
         LocalDateTime localDateTimeEnd = LocalDateTime.now();
         System.out.println(localDateTimeEnd);
         System.out.println();
-        System.out.println("Итого интервал времени в секундах: ");
+        System.out.println("Итого интервал времени в секундах:");
         long seconds = localDateTimeEnd.getSecond() - localDateTimeStart.getSecond();
         System.out.println(seconds);
-        System.out.println("Максимально возможное количество запросов в секунду: ");
+        System.out.println("Максимально допустимое количество запросов в секунду:");
         System.out.println(requestLimit);
         System.out.println("Фактическое количество запросов за интервал времени:");
         System.out.println(requests);
-        System.out.println("Итого фактическое количество запросов в секунду: ");
-        double taskPerSecond = (double) requests / seconds;
-        System.out.println(taskPerSecond);
+        System.out.println("Фактическое количество успешных запросов за интервал времени:");
+        System.out.println(requestsSuccessful);
+        System.out.println("Фактическое среднее количество успешных запросов в секунду:");
+        double taskPerPeriod = (double) requestsSuccessful / seconds;
+        System.out.println(taskPerPeriod);
     }
 
     static class Document {
