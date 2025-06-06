@@ -18,7 +18,8 @@ import static java.util.concurrent.TimeUnit.*;
 
 public class CrptApi {
 
-    public CrptApi() {
+    public CrptApi(TimeUnit timeUnit, int requestLimit, Semaphore sem) throws InterruptedException {
+        Executors.newScheduledThreadPool(requestLimit).execute(new CrptApiInvoke(timeUnit, requestLimit, sem));
     }
 
     enum DocumentFormat {
@@ -62,7 +63,18 @@ public class CrptApi {
         }
     }
 
-    public String createDoc(Object docObject, String signature, Semaphore sem) throws IOException
+    /**
+     * Method to create document for the introduction of goods produced in the RF into circulation
+     *
+     * @param docObject document data as java object
+     * @param signature digital signature data as string
+     * @param sem       semaphore that controls the timing parameters of API access
+     * @return document created data as string when request success or empty string otherwise
+     * @throws IOException          exception if request was not success
+     * @throws URISyntaxException   exception if URI syntax was not right
+     * @throws InterruptedException exception if request was interrupted
+     */
+    public static String createDoc(Object docObject, String signature, Semaphore sem) throws IOException
             , URISyntaxException, InterruptedException {
 
         final String apiCreateDocUrl = "http://localhost:8080/api/v3/lk/documents/create";    // Demo data
@@ -97,7 +109,7 @@ public class CrptApi {
 
             HttpClient client = HttpClient.newHttpClient();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-//            System.out.println(response);
+//            System.out.println(response);                                     // Demo print
             return response.body();
         } else {
             return "";                                                          // Запрос не выполнен
@@ -157,9 +169,8 @@ public class CrptApi {
             this.requestLimit = requestLimit;
             this.timeUnit = timeUnit;
             this.sem = sem;
-            System.out.println();
-            System.out.println("Вызов CrptApi...");
-            Thread.sleep(100);
+            System.out.println();                                                   // Demo print
+            System.out.println("Вызов CrptApi...");                                 // Demo print
         }
 
         public static String getStringResult() {
@@ -169,8 +180,7 @@ public class CrptApi {
         @Override
         public void run() {
             try {
-                String signature = "12345";
-                CrptApi crptApi = new CrptApi();
+                String signature = "12345";                                             // Demo data
 
                 List<Product> productList = new ArrayList<>();
                 Product product1 = new Product("12345", "2025-01-01"
@@ -186,14 +196,15 @@ public class CrptApi {
                 productList.add(product2);
 
                 Document document = new Document("0123456789", "11111111111111111111"
-                        , "123", "Статус", "Тип", false, "22222222222222222222"
+                        , "123", "Статус", "Тип", false
+                        , "22222222222222222222"
                         , "33333333333333333333", "44444444444444444444"
                         , "2025-03-01", Production.OWN_PRODUCTION.toString(), productList
                         , "2025-03-30", "123456");
 
                 try {
-                    stringResult = crptApi.createDoc(document, signature, sem);
-                    System.out.println("Получен результат " + stringResult);
+                    stringResult = CrptApi.createDoc(document, signature, sem);
+                    System.out.println("Получен результат " + stringResult);                // Demo print
                 } catch (IOException | URISyntaxException | InterruptedException e) {
                     throw new URISyntaxException("Document creating exception", e.toString());
                 }
@@ -207,11 +218,11 @@ public class CrptApi {
     public static void main(String[] args) throws InterruptedException {
 //                      Класс для работы с API Честного знака
 //                      Данные ограничения количества запросов (demo: пример в секундах)
-        int requestLimit = 2;
         TimeUnit timeUnit = SECONDS;
-//                      Данные ограничения периода тестирования (demo: пример в секундах)
-        int testDuration = 10;
-
+        int requestLimit = 5;                                   // Допустимое количество запросов (с)
+//                      Данные периода тестирования
+        int testDuration = 20;                                  // Длительность времени тестирования (с)
+        int testInterval = 100;                                 // Интервал времени между запросами (мс)
         Semaphore sem = new Semaphore(0);
         SemaphoreServiceDemon semaphoreServiceDemon = new SemaphoreServiceDemon(requestLimit, timeUnit, sem);
         Thread semaphoreServiceDemonThread = new Thread(semaphoreServiceDemon);
@@ -225,18 +236,21 @@ public class CrptApi {
         System.out.println("Время старта потока запросов:");
         LocalDateTime localDateTimeStart = LocalDateTime.now();
         System.out.println(localDateTimeStart);
-        int requests = 0;
-        int requestsSuccessful = 0;
+        int requests = 0;                                       // Счетчик общего количества запросов
+        int requestsSuccessful = 0;                             // Счетчик количества успешных запросов
         while (LocalDateTime.now().isBefore(localDateTimeStart.plusSeconds(testDuration))) {
-            new CrptApiInvoke(timeUnit, requestLimit, sem).run();
+            new CrptApi(timeUnit, requestLimit, sem);
+            Thread.sleep(testInterval);
             System.out.println(LocalDateTime.now());
             if (!Objects.equals(CrptApiInvoke.getStringResult(), "")) {
                 requestsSuccessful++;
             }
             requests++;
         }
-        System.out.println("Время окончания потока запросов:");
         LocalDateTime localDateTimeEnd = LocalDateTime.now();
+        Thread.sleep(1200);
+        System.out.println();
+        System.out.println("Время окончания потока запросов:");
         System.out.println(localDateTimeEnd);
         System.out.println();
         System.out.println("Итого интервал времени в секундах:");
