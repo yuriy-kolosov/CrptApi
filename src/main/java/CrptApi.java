@@ -18,8 +18,8 @@ import static java.util.concurrent.TimeUnit.*;
 
 public class CrptApi {
 
-    public CrptApi(TimeUnit timeUnit, int requestLimit, Semaphore sem) throws InterruptedException {
-        Executors.newScheduledThreadPool(requestLimit).execute(new CrptApiInvoke(timeUnit, requestLimit, sem));
+    public CrptApi(Semaphore sem) throws InterruptedException {
+        Executors.newScheduledThreadPool(1).execute(new CrptApiCreateDocInvoke(sem));
     }
 
     enum DocumentFormat {
@@ -54,8 +54,9 @@ public class CrptApi {
         public void run() {
             for (; ; ) {
                 try {
-                    sem.release(requestLimit);
+//                    sem.release(requestLimit);
                     Thread.sleep(millisEstimate(timeUnit), nanoEstimate(timeUnit));
+                    sem.release(requestLimit);
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);
                 }
@@ -158,16 +159,12 @@ public class CrptApi {
         return nanoEstimated;
     }
 
-    static class CrptApiInvoke implements Runnable {
+    static class CrptApiCreateDocInvoke implements Runnable {
 
-        int requestLimit;
-        TimeUnit timeUnit;
         Semaphore sem;
         static String stringResult;
 
-        public CrptApiInvoke(TimeUnit timeUnit, int requestLimit, Semaphore sem) throws InterruptedException {
-            this.requestLimit = requestLimit;
-            this.timeUnit = timeUnit;
+        public CrptApiCreateDocInvoke(Semaphore sem) throws InterruptedException {
             this.sem = sem;
             System.out.println();                                                   // Demo print
             System.out.println("Вызов CrptApi...");                                 // Demo print
@@ -215,14 +212,48 @@ public class CrptApi {
         }
     }
 
+    static class RequestTestThread implements Runnable {
+
+        Semaphore sem;
+        static int requests = 0;                                       // Счетчик общего количества запросов
+        static int requestsSuccessful = 0;                             // Счетчик количества успешных запросов
+
+        public RequestTestThread(Semaphore sem) {
+            this.sem = sem;
+        }
+
+        public static int getRequests() {
+            return requests;
+        }
+
+        public static int getRequestsSuccessful() {
+            return requestsSuccessful;
+        }
+
+        @Override
+        public void run() {
+            try {
+                new CrptApi(sem);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            System.out.println(LocalDateTime.now());
+            if (!Objects.equals(CrptApiCreateDocInvoke.getStringResult(), "")) {
+                requestsSuccessful++;
+            }
+            requests++;
+        }
+    }
+
     public static void main(String[] args) throws InterruptedException {
 //                      Класс для работы с API Честного знака
 //                      Данные ограничения количества запросов (demo: пример в секундах)
         TimeUnit timeUnit = SECONDS;
-        int requestLimit = 5;                                   // Допустимое количество запросов (с)
+        int requestLimit = 2;                                   // Допустимое количество запросов (с)
 //                      Данные периода тестирования
-        int testDuration = 20;                                  // Длительность времени тестирования (с)
-        int testInterval = 100;                                 // Интервал времени между запросами (мс)
+//        int interval = 10;                                    // Интервал времени тестирования (с)
+        TimeUnit timeUnitTest = MILLISECONDS;
+        int intervalTest = 2000;                                 // Интервал времени между запросами (мс)
         Semaphore sem = new Semaphore(0);
         SemaphoreServiceDemon semaphoreServiceDemon = new SemaphoreServiceDemon(requestLimit, timeUnit, sem);
         Thread semaphoreServiceDemonThread = new Thread(semaphoreServiceDemon);
@@ -236,17 +267,12 @@ public class CrptApi {
         System.out.println("Время старта потока запросов:");
         LocalDateTime localDateTimeStart = LocalDateTime.now();
         System.out.println(localDateTimeStart);
-        int requests = 0;                                       // Счетчик общего количества запросов
-        int requestsSuccessful = 0;                             // Счетчик количества успешных запросов
-        while (LocalDateTime.now().isBefore(localDateTimeStart.plusSeconds(testDuration))) {
-            new CrptApi(timeUnit, requestLimit, sem);
-            Thread.sleep(testInterval);
-            System.out.println(LocalDateTime.now());
-            if (!Objects.equals(CrptApiInvoke.getStringResult(), "")) {
-                requestsSuccessful++;
-            }
-            requests++;
-        }
+
+        ScheduledExecutorService service = Executors.newScheduledThreadPool(10);
+        service.schedule(new RequestTestThread(sem), intervalTest, timeUnitTest);
+        Thread.sleep(intervalTest);
+        service.shutdown();
+
         LocalDateTime localDateTimeEnd = LocalDateTime.now();
         Thread.sleep(1200);
         System.out.println();
@@ -259,11 +285,11 @@ public class CrptApi {
         System.out.println("Максимально допустимое количество запросов в секунду:");
         System.out.println(requestLimit);
         System.out.println("Фактическое количество запросов за интервал времени:");
-        System.out.println(requests);
+        System.out.println(RequestTestThread.getRequests());
         System.out.println("Фактическое количество успешных запросов за интервал времени:");
-        System.out.println(requestsSuccessful);
+        System.out.println(RequestTestThread.getRequestsSuccessful());
         System.out.println("Фактическое среднее количество успешных запросов в секунду:");
-        double taskPerPeriod = (double) requestsSuccessful / seconds;
+        double taskPerPeriod = (double) RequestTestThread.getRequestsSuccessful() / seconds;
         System.out.println(taskPerPeriod);
     }
 
