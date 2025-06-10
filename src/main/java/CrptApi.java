@@ -20,13 +20,22 @@ import java.util.concurrent.TimeUnit;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
-public class CrptApi {
+public class CrptApi implements Runnable {
 
-    public CrptApi(Semaphore sem) throws InterruptedException {
-        Executors.newScheduledThreadPool(1).execute(new CrptApiCreateDocInvoke(sem));
+    private final TimeUnit timeUnit;
+    private final int requestLimit;
+    private final Semaphore sem;
+
+    public CrptApi(TimeUnit timeUnit, int requestLimit) {
+        this.timeUnit = timeUnit;
+        this.requestLimit = requestLimit;
+        this.sem = new Semaphore(0);
     }
 
-    public CrptApi() {
+    @Override
+    public void run() {
+        ScheduledExecutorService serviceDemon = Executors.newScheduledThreadPool(1);
+        serviceDemon.execute(new SemaphoreServiceDemon(timeUnit, requestLimit, sem));
     }
 
     enum DocumentFormat {
@@ -48,20 +57,19 @@ public class CrptApi {
 
     static class SemaphoreServiceDemon implements Runnable {
 
-        private final int requestLimit;
         private final TimeUnit timeUnit;
+        private final int requestLimit;
         private final Semaphore sem;
 
-        public SemaphoreServiceDemon(int requestLimit, TimeUnit timeUnit, Semaphore sem) {
-            this.requestLimit = requestLimit;
+        public SemaphoreServiceDemon(TimeUnit timeUnit, int requestLimit, Semaphore sem) {
             this.timeUnit = timeUnit;
+            this.requestLimit = requestLimit;
             this.sem = sem;
         }
 
         public void run() {
             for (; ; ) {
                 try {
-//                    sem.release(requestLimit);
                     Thread.sleep(millisEstimate(timeUnit), nanoEstimate(timeUnit));
                     if (sem.availablePermits() < requestLimit) {
                         sem.release(requestLimit - sem.availablePermits());
@@ -119,7 +127,7 @@ public class CrptApi {
 
             HttpClient client = HttpClient.newHttpClient();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            System.out.println(response);                                     // Demo print
+//            System.out.println(response);                                     // Demo print
             return response.body();
         } else {
             return "";                                                          // Запрос не выполнен
@@ -175,10 +183,14 @@ public class CrptApi {
         static int requestsSuccessful = 0;                             // Счетчик количества успешных запросов
         static String stringResult;
 
-        public CrptApiCreateDocInvoke(Semaphore sem) {
-            this.sem = sem;
-            System.out.println();                                                   // Demo print
-            System.out.println("Вызов CrptApi...");                                 // Demo print
+        public CrptApiCreateDocInvoke(TimeUnit timeUnit, int requestLimit) {
+
+            ScheduledExecutorService serviceApi = Executors.newScheduledThreadPool(1);
+            CrptApi crptApi = new CrptApi(timeUnit, requestLimit);
+            this.sem = crptApi.sem;
+//            System.out.println("Вызов CrptApi...");                                 // Demo print
+            serviceApi.execute(crptApi);
+
         }
 
         public static int getRequests() {
@@ -219,10 +231,13 @@ public class CrptApi {
                         , "2025-03-30", "123456");
 
                 try {
+                    System.out.println();                                                   // Demo print
+                    System.out.println("Вызов CrptApi.createDoc...");                       // Demo print
                     stringResult = CrptApi.createDoc(document, signature, sem);
-                    System.out.println("Получен результат " + stringResult);                // Demo print
+//                    System.out.println("Получен результат " + stringResult);                // Demo print
                     System.out.println(LocalDateTime.now());
                     if (!Objects.equals(CrptApiCreateDocInvoke.getStringResult(), "")) {
+                        System.out.println("Запрос выполнен: " + stringResult);                // Demo print
                         requestsSuccessful++;
                     }
                     requests++;
@@ -245,12 +260,7 @@ public class CrptApi {
         TimeUnit timeUnitTest = MILLISECONDS;
         int intervalTest = 200;                                 // Интервал времени между запросами (мс)
         int intervalTestNumber = 50;                            // Количество интервалов тестирования
-        Semaphore sem = new Semaphore(0);
-        SemaphoreServiceDemon semaphoreServiceDemon = new SemaphoreServiceDemon(requestLimit, timeUnit, sem);
-        Thread semaphoreServiceDemonThread = new Thread(semaphoreServiceDemon);
-        semaphoreServiceDemonThread.setDaemon(true);
-        semaphoreServiceDemonThread.start();
-//                      Поток запросов для вызова метода
+///                      Поток запросов для вызова метода
 //                      "Создание документа для ввода в оборот товара, произведенного в РФ"
 //                      (demo: пример)
         System.out.println("Demo-запуск запросов с ограничением количества запросов в секунду");
@@ -260,7 +270,8 @@ public class CrptApi {
         System.out.println(localDateTimeStart);
 
         ScheduledExecutorService service = Executors.newScheduledThreadPool(2);
-        service.scheduleAtFixedRate(new CrptApiCreateDocInvoke(sem), intervalTest, intervalTest, timeUnitTest);
+        service.scheduleAtFixedRate(new CrptApiCreateDocInvoke(timeUnit, requestLimit)
+                , intervalTest, intervalTest, timeUnitTest);
         Thread.sleep(intervalTest * intervalTestNumber);
         service.shutdown();
         LocalDateTime localDateTimeEnd = LocalDateTime.now();
