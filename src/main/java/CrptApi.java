@@ -247,12 +247,17 @@ public class CrptApi {
     public static void main(String[] args) throws InterruptedException {
 //                      Класс для работы с API Честного знака
 //                      Данные ограничения количества запросов (demo: пример в секундах)
-        TimeUnit timeUnit = SECONDS;
-        int requestLimit = 1;                                   // Допустимое количество запросов (с)
+        TimeUnit timeUnit = SECONDS;                            // Единица времени действующего ограничения
+        int requestLimit = 4;                                   // Допустимое количество запросов в единицу времени
 //                      Данные периода тестирования
-        TimeUnit timeUnitTest = MILLISECONDS;
-        int intervalTest = 100;                                 // Интервал времени между запросами (мс)
-        int intervalTestNumber = 50;                            // Количество интервалов тестирования
+        TimeUnit timeUnitTest = MILLISECONDS;                   // Единица времени потока запросов
+        int intervalTest = 100;                                 // Интервал для расчета времени тестирования (мс)
+        int intervalTest1 = 120;                                // Интервал времени между запросами потока 1 (мс)
+        int intervalTest2 = 140;                                // Интервал времени между запросами потока 2 (мс)
+        int intervalTest3 = 160;                                // Интервал времени между запросами потока 3 (мс)
+        int intervalTest4 = 180;                                // Интервал времени между запросами потока 4 (мс)
+        int intervalTest5 = 200;                                // Интервал времени между запросами потока 5 (мс)
+        int intervalTestNumber = 200;                           // Количество интервалов тестирования
 //                      Поток запросов для вызова метода
 //                      "Создание документа для ввода в оборот товара, произведенного в РФ"
 //                      (demo: пример)
@@ -262,14 +267,20 @@ public class CrptApi {
         LocalDateTime localDateTimeStart = LocalDateTime.now();
         System.out.println(localDateTimeStart);
 
-        ScheduledExecutorService service = Executors.newScheduledThreadPool(1);
-        service.scheduleAtFixedRate(new CrptApiCreateDocInvoke(timeUnit, requestLimit)
-                , intervalTest, intervalTest, timeUnitTest);
+        ScheduledExecutorService service = Executors.newScheduledThreadPool(5);
+        CrptApiCreateDocInvoke crptApiCreateDocInvoke = new CrptApiCreateDocInvoke(timeUnit, requestLimit);
+
+        service.scheduleAtFixedRate(crptApiCreateDocInvoke, intervalTest1, intervalTest1, timeUnitTest);
+        service.scheduleAtFixedRate(crptApiCreateDocInvoke, intervalTest2, intervalTest2, timeUnitTest);
+        service.scheduleAtFixedRate(crptApiCreateDocInvoke, intervalTest3, intervalTest3, timeUnitTest);
+        service.scheduleAtFixedRate(crptApiCreateDocInvoke, intervalTest4, intervalTest4, timeUnitTest);
+        service.scheduleAtFixedRate(crptApiCreateDocInvoke, intervalTest5, intervalTest5, timeUnitTest);
+
         Thread.sleep(intervalTest * intervalTestNumber);
         service.shutdown();
         LocalDateTime localDateTimeEnd = LocalDateTime.now();
 
-        Thread.sleep(1200);
+        Thread.sleep(1000);
         System.out.println();
         System.out.println("Время окончания потока запросов:");
         System.out.println(localDateTimeEnd);
