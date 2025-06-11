@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
-public class CrptApi implements Runnable {
+public class CrptApi {
 
     private final TimeUnit timeUnit;
     private final int requestLimit;
@@ -30,12 +30,9 @@ public class CrptApi implements Runnable {
         this.timeUnit = timeUnit;
         this.requestLimit = requestLimit;
         this.sem = new Semaphore(0);
-    }
-
-    @Override
-    public void run() {
-        ScheduledExecutorService serviceDemon = Executors.newScheduledThreadPool(1);
-        serviceDemon.execute(new SemaphoreServiceDemon(timeUnit, requestLimit, sem));
+        Thread threadDemon = new Thread(() -> new SemaphoreServiceDemon(timeUnit, requestLimit, sem).run());
+        threadDemon.setDaemon(true);
+        threadDemon.start();
     }
 
     enum DocumentFormat {
@@ -184,13 +181,9 @@ public class CrptApi implements Runnable {
         static String stringResult;
 
         public CrptApiCreateDocInvoke(TimeUnit timeUnit, int requestLimit) {
-
-            ScheduledExecutorService serviceApi = Executors.newScheduledThreadPool(1);
             CrptApi crptApi = new CrptApi(timeUnit, requestLimit);
             this.sem = crptApi.sem;
 //            System.out.println("Вызов CrptApi...");                                 // Demo print
-            serviceApi.execute(crptApi);
-
         }
 
         public static int getRequests() {
@@ -255,12 +248,12 @@ public class CrptApi implements Runnable {
 //                      Класс для работы с API Честного знака
 //                      Данные ограничения количества запросов (demo: пример в секундах)
         TimeUnit timeUnit = SECONDS;
-        int requestLimit = 2;                                   // Допустимое количество запросов (с)
+        int requestLimit = 1;                                   // Допустимое количество запросов (с)
 //                      Данные периода тестирования
         TimeUnit timeUnitTest = MILLISECONDS;
-        int intervalTest = 200;                                 // Интервал времени между запросами (мс)
+        int intervalTest = 100;                                 // Интервал времени между запросами (мс)
         int intervalTestNumber = 50;                            // Количество интервалов тестирования
-///                      Поток запросов для вызова метода
+//                      Поток запросов для вызова метода
 //                      "Создание документа для ввода в оборот товара, произведенного в РФ"
 //                      (demo: пример)
         System.out.println("Demo-запуск запросов с ограничением количества запросов в секунду");
@@ -269,7 +262,7 @@ public class CrptApi implements Runnable {
         LocalDateTime localDateTimeStart = LocalDateTime.now();
         System.out.println(localDateTimeStart);
 
-        ScheduledExecutorService service = Executors.newScheduledThreadPool(2);
+        ScheduledExecutorService service = Executors.newScheduledThreadPool(1);
         service.scheduleAtFixedRate(new CrptApiCreateDocInvoke(timeUnit, requestLimit)
                 , intervalTest, intervalTest, timeUnitTest);
         Thread.sleep(intervalTest * intervalTestNumber);
