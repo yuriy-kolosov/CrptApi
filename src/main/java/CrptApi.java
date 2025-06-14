@@ -12,8 +12,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 
@@ -23,16 +22,25 @@ public class CrptApi {
     private final int requestLimit;
     private final Semaphore sem;
 
-    public CrptApi(TimeUnit timeUnit, int requestLimit) {
+    public CrptApi(TimeUnit timeUnit, int requestLimit) throws InterruptedException {
         this.timeUnit = timeUnit;
         this.requestLimit = requestLimit;
         this.sem = new Semaphore(0);
-        Thread threadDemon = new Thread(() -> new SemaphoreServiceDemon(timeUnit, requestLimit, sem).run());
+
+        Thread threadDemon = new Thread(() -> {
+            int request = sem.availablePermits();
+            if (request < requestLimit) {
+                sem.release(requestLimit - request);
+            }
+        });
         threadDemon.setDaemon(true);
-        threadDemon.start();
+
+        Executors.newScheduledThreadPool(1)
+                .scheduleWithFixedDelay(threadDemon, 1L, 1L, timeUnit);
+
     }
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) throws InterruptedException, ExecutionException, TimeoutException {
 //                      Класс для работы с API Честного знака
 //                      Данные ограничения количества запросов (demo: пример в секундах)
         TimeUnit timeUnit = SECONDS;                // Единица времени действующего ограничения (test)
@@ -56,7 +64,7 @@ public class CrptApi {
         CrptApi crptApi = new CrptApi(timeUnit, requestLimit);
         for (int i = 0; i <= intervalTestNumber; i++) {
             Thread.sleep(intervalTestStep);
-            resultCountTest = crptApi.crptApiCreateDocInvoke(crptApi);
+            resultCountTest = CrptApi.crptApiCreateDocInvoke(crptApi);
             resultCountTestAll[0] = resultCountTestAll[0] + resultCountTest[0];
             resultCountTestAll[1] = resultCountTestAll[1] + resultCountTest[1];
         }
@@ -101,33 +109,6 @@ public class CrptApi {
     enum Production {
         OWN_PRODUCTION,
         CONTRACT_PRODUCTION
-    }
-
-    static class SemaphoreServiceDemon implements Runnable {
-
-        private final TimeUnit timeUnit;
-        private final int requestLimit;
-        private final Semaphore sem;
-
-        public SemaphoreServiceDemon(TimeUnit timeUnit, int requestLimit, Semaphore sem) {
-            this.timeUnit = timeUnit;
-            this.requestLimit = requestLimit;
-            this.sem = sem;
-        }
-
-        public void run() {
-            int request = sem.availablePermits();
-            for (; ; ) {
-                try {
-                    Thread.sleep(millisEstimate(timeUnit), nanoEstimate(timeUnit));
-                    if (request < requestLimit) {
-                        sem.release(requestLimit - request);
-                    }
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                }
-            }
-        }
     }
 
     /**
@@ -182,49 +163,7 @@ public class CrptApi {
         }
     }
 
-    private static long millisEstimate(TimeUnit timeUnit) {
-        long millisEstimated = 0L;
-        switch (timeUnit) {
-            case SECONDS:
-                millisEstimated = 1000L;
-                break;
-            case MILLISECONDS:
-                millisEstimated = 1L;
-                break;
-            case MINUTES:
-                millisEstimated = 1000 * 60L;
-                break;
-            case HOURS:
-                millisEstimated = 1000 * 60 * 60L;
-                break;
-            case DAYS:
-                millisEstimated = 1000 * 60 * 60 * 24L;
-                break;
-            case MICROSECONDS:
-            case NANOSECONDS:
-        }
-        return millisEstimated;
-    }
-
-    private static int nanoEstimate(TimeUnit timeUnit) {
-        int nanoEstimated = 0;
-        switch (timeUnit) {
-            case SECONDS:
-            case MILLISECONDS:
-            case MINUTES:
-            case HOURS:
-            case DAYS:
-                break;
-            case MICROSECONDS:
-                nanoEstimated = 1000;
-                break;
-            case NANOSECONDS:
-                nanoEstimated = 1;
-        }
-        return nanoEstimated;
-    }
-
-    private int[] crptApiCreateDocInvoke(CrptApi crptApi) {
+    private static int[] crptApiCreateDocInvoke(CrptApi crptApi) {
 
         int[] resultCount = new int[]{0, 0}; // resultCount[0] Счетчик общего количества запросов
         // resultCount[1] Счетчик количества успешных запросов
