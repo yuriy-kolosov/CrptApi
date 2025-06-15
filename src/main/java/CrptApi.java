@@ -18,29 +18,23 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 
 public class CrptApi {
 
-    private final TimeUnit timeUnit;
-    private final int requestLimit;
     private final Semaphore sem;
+    private final ScheduledExecutorService semExecutor;
 
-    public CrptApi(TimeUnit timeUnit, int requestLimit) throws InterruptedException {
-        this.timeUnit = timeUnit;
-        this.requestLimit = requestLimit;
+    public CrptApi(TimeUnit timeUnit, int requestLimit) {
         this.sem = new Semaphore(0);
-
-        Thread threadDemon = new Thread(() -> {
-            int request = sem.availablePermits();
-            if (request < requestLimit) {
-                sem.release(requestLimit - request);
-            }
-        });
-        threadDemon.setDaemon(true);
-
-        Executors.newScheduledThreadPool(1)
-                .scheduleWithFixedDelay(threadDemon, 1L, 1L, timeUnit);
-
+        this.semExecutor = Executors.newScheduledThreadPool(1);
+        semExecutor
+                .scheduleWithFixedDelay(() -> {
+                            int request = sem.availablePermits();
+                            if (request < requestLimit) {
+                                sem.release(requestLimit - request);
+                            }
+                        }
+                        , 1L, 1L, timeUnit);
     }
 
-    public static void main(String[] args) throws InterruptedException, ExecutionException, TimeoutException {
+    public static void main(String[] args) throws InterruptedException {
 //                      Класс для работы с API Честного знака
 //                      Данные ограничения количества запросов (demo: пример в секундах)
         TimeUnit timeUnit = SECONDS;                // Единица времени действующего ограничения (test)
@@ -88,6 +82,7 @@ public class CrptApi {
         double taskPerPeriod = (double) resultCountTestAll[1] / seconds;
         System.out.println(taskPerPeriod);
         System.out.println();
+        crptApi.semExecutor.shutdown();
     }
 
     public Semaphore getSem() {
